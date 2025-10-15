@@ -1,5 +1,5 @@
-streamlit==1.39.0
-pandas==2.2.2
-numpy==1.26.4
-matplotlib==3.8.4
-altair==5.4.1
+streamlit>=1.35
+pandas>=2.0
+numpy>=1.25
+matplotlib>=3.7
+altair>=5.0
