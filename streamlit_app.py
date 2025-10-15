@@ -17,8 +17,8 @@ except Exception as e:
 
 st.set_page_config(page_title="학생 성적 분포 분석", layout="wide")
 
-st.title("학생 성적 분포 히스토그램")
-st.caption("파일을 업로드하면 국어/수학 '유형'별, 영어, 한국사, 탐구 과목 점수 분포를 시각화합니다. (막대 높이가 높을수록 붉은색, 낮을수록 하늘색)")
+st.title("모의고사 원점수 리딩 결과 학생 성적 분포 히스토그램")
+st.caption("univ로 리딩한 csv 파일을 업로드하면 국어/수학 '유형'별, 영어, 한국사, 탐구 과목 점수 분포를 시각화합니다. (막대 높이가 높을수록 붉은색, 낮을수록 하늘색)")
 
 if not USE_MPL:
     st.warning("matplotlib을 불러오지 못해 Plotly로 대체합니다. requirements.txt에 matplotlib가 포함되어 있는지 확인하세요.")
