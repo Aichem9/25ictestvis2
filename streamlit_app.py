@@ -5,27 +5,30 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
-st.set_page_config(page_title="학생 성적 분포 분석", layout="wide")
-
-# ---------- Optional backend detection ----------
-BACKEND = "mpl"  # default try matplotlib first
+# ---- Optional backends: try matplotlib first, else use plotly ----
+USE_MPL = True
 try:
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
-except Exception:
-    BACKEND = "altair"
+except Exception as e:
+    USE_MPL = False
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+st.set_page_config(page_title="학생 성적 분포 분석", layout="wide")
 
 st.title("학생 성적 분포 히스토그램")
 st.caption("파일을 업로드하면 국어/수학 '유형'별, 영어, 한국사, 탐구 과목 점수 분포를 시각화합니다. (막대 높이가 높을수록 붉은색, 낮을수록 하늘색)")
 
-if BACKEND == "altair":
-    st.warning("matplotlib을 사용할 수 없어 Altair로 대체합니다. requirements.txt에 matplotlib가 포함되어 있는지 확인하세요.")
+if not USE_MPL:
+    st.warning("matplotlib을 불러오지 못해 Plotly로 대체합니다. requirements.txt에 matplotlib가 포함되어 있는지 확인하세요.")
 
 uploaded = st.file_uploader("CSV 파일을 업로드하세요 (.csv)", type=["csv"])
 bin_width = st.sidebar.number_input("히스토그램 구간 폭(점)", min_value=1, max_value=50, value=5, step=1)
 normalize = st.sidebar.checkbox("비율(%)로 보기", value=False)
 
 def _read_csv(file):
+    # 한국어 헤더/인코딩 대응
     raw = file.read()
     for enc in ("utf-8-sig", "cp949", "utf-8"):
         try:
@@ -38,6 +41,7 @@ def _read_csv(file):
     return pd.read_csv(buf)
 
 def _coerce_numeric(series):
+    # 쉼표, 공백 제거 후 숫자 변환
     return pd.to_numeric(series.astype(str).str.replace(",", "").str.strip(), errors="coerce")
 
 def _ensure_columns(df):
@@ -51,7 +55,10 @@ def _ensure_columns(df):
         st.warning("열 개수가 부족합니다. 파일 형식을 확인해주세요.")
     cols = df.columns.tolist()
     def safe_col(idx, default_name):
-        return cols[idx] if idx < len(cols) else default_name
+        if idx < len(cols):
+            return cols[idx]
+        else:
+            return default_name
 
     h_col = safe_col(7, "H_국어유형")
     i_col = safe_col(8, "I_국어점수")
@@ -65,14 +72,20 @@ def _ensure_columns(df):
     keep_cols = [c for c in [h_col, i_col, j_col, k_col, l_col, m_col, n_col, o_col] if c in df.columns]
     view = df[keep_cols].copy()
 
-    for c in [i_col, k_col, l_col, m_col]:
-        if c in view.columns:
-            view[c] = _coerce_numeric(view[c])
+    if i_col in view.columns:
+        view[i_col] = _coerce_numeric(view[i_col])
+    if k_col in view.columns:
+        view[k_col] = _coerce_numeric(view[k_col])
+    if l_col in view.columns:
+        view[l_col] = _coerce_numeric(view[l_col])
+    if m_col in view.columns:
+        view[m_col] = _coerce_numeric(view[m_col])
 
     mapping = dict(h=h_col, i=i_col, j=j_col, k=k_col, l=l_col, m=m_col, n=n_col, o=o_col)
     return view, mapping
 
 def split_inquiry_cols(df, n_col, o_col):
+    """N/O: '점수/과목명' → [탐구점수, 탐구과목명]"""
     parts = []
     for col in [n_col, o_col]:
         if col in df.columns:
@@ -107,25 +120,47 @@ def _build_bins(series, binsize):
         counts_vis = counts
     return counts, counts_vis, bin_edges
 
+def _colors_from_counts(counts):
+    # 0~1 정규화 → skyblue(#87CEEB)→red(#FF0000)
+    if counts is None or len(counts) == 0:
+        return []
+    mx = np.max(counts) if np.max(counts) > 0 else 1.0
+    vals = (counts / mx).astype(float)
+    if USE_MPL:
+        from matplotlib.colors import LinearSegmentedColormap
+        cmap = LinearSegmentedColormap.from_list("skyblue_red", ["#87CEEB", "#FF0000"])
+        return [cmap(v) for v in vals]
+    else:
+        # plotly는 rgba/hex 모두 허용
+        import matplotlib
+        try:
+            # 만약 런타임에 matplotlib.colors를 쓸 수 있으면 동일 그라데이션 사용
+            from matplotlib.colors import LinearSegmentedColormap
+            cmap = LinearSegmentedColormap.from_list("skyblue_red", ["#87CEEB", "#FF0000"])
+            return [matplotlib.colors.to_hex(cmap(v)) for v in vals]
+        except Exception:
+            # 간단한 보간
+            def lerp(a, b, t): return int(a + (b - a) * t)
+            colors = []
+            for t in vals:
+                r = lerp(135, 255, t)
+                g = lerp(206, 0, t)
+                b = lerp(235, 0, t)
+                colors.append(f"rgb({r},{g},{b})")
+            return colors
+
 def plot_histogram(series, title, binsize):
     data = pd.Series(series).dropna()
     if data.empty:
         st.info(f"표시할 데이터가 없습니다: {title}")
         return
     counts, counts_vis, bin_edges = _build_bins(data, binsize)
-    if counts is None:
-        st.info(f"표시할 데이터가 없습니다: {title}")
-        return
+    colors = _colors_from_counts(counts)
 
-    if BACKEND == "mpl":
-        from matplotlib.colors import LinearSegmentedColormap
+    if USE_MPL:
+        import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
         width = np.diff(bin_edges)
-        mx = np.max(counts) if np.max(counts) > 0 else 1.0
-        vals = (counts / mx).astype(float)
-        cmap = LinearSegmentedColormap.from_list("skyblue_red", ["#87CEEB", "#FF0000"])
-        colors = [cmap(v) for v in vals]
-
         ax.bar(bin_edges[:-1], counts_vis, width=width, align='edge', edgecolor="black", color=colors)
         ax.set_title(title)
         ax.set_xlabel("점수")
@@ -133,24 +168,28 @@ def plot_histogram(series, title, binsize):
         ax.set_xlim(bin_edges[0], bin_edges[-1])
         st.pyplot(fig)
     else:
-        import altair as alt
+        # Plotly: 막대를 수동 작성(각 bin 별 색 적용)
         lefts = bin_edges[:-1]
         rights = bin_edges[1:]
-        df_bins = pd.DataFrame({
-            "bin_left": lefts,
-            "bin_right": rights,
-            "bin_label": [f"{int(l)}~{int(r)}" for l, r in zip(lefts, rights)],
-            "count": counts,
-            "value": counts_vis
-        })
-        chart = alt.Chart(df_bins).mark_bar(stroke='black').encode(
-            x=alt.X('bin_left:Q', title='점수', axis=alt.Axis(labelAngle=0)),
-            x2='bin_right:Q',
-            y=alt.Y('value:Q', title=("인원수" if not normalize else "비율(%)")),
-            color=alt.Color('count:Q', scale=alt.Scale(range=["#87CEEB", "#FF0000"]), legend=None),
-            tooltip=[alt.Tooltip('bin_label:N', title='구간'), alt.Tooltip('count:Q', title='인원수')]
-        ).properties(title=title)
-        st.altair_chart(chart, use_container_width=True)
+        fig = go.Figure()
+        for i in range(len(lefts)):
+            fig.add_trace(go.Bar(
+                x=[lefts[i]],
+                y=[counts_vis[i]],
+                width=[rights[i] - lefts[i]],
+                marker_color=colors[i],
+                marker_line_color="black",
+                marker_line_width=1,
+                hovertemplate=f"{lefts[i]:.0f} ~ {rights[i]:.0f} 점<br>" + ("인원수: %{y}" if not normalize else "비율: %{y:.2f}%") + "<extra></extra>"
+            ))
+        fig.update_layout(
+            title=title,
+            xaxis_title="점수",
+            yaxis_title=("인원수" if not normalize else "비율(%)"),
+            barmode="overlay",
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 def plot_histogram_by_group(df, score_col, group_col, title_prefix, binsize):
     if group_col not in df.columns or score_col not in df.columns:
